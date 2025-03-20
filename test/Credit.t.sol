@@ -56,6 +56,9 @@ contract CreditTest is Test, Deployers {
     event LoanRepaid(uint256 indexed loanId, address indexed borrower, uint256 amount, bool isFull);
     event LoanLiquidated(uint256 indexed loanId, address indexed borrower, uint256 collateralLiquidated);
     event SwapCompleted(address indexed user, uint256 amountIn, uint256 amountOut);
+    event LiquidityAdded(address indexed provider, uint256 liquidity);
+    event LiquidityRemoved(address indexed provider, uint256 liquidity);
+    event RewardDistributed(uint256 lpShare, uint256 safetyShare, uint256 treasuryShare);
 
     /*//////////////////////////////////////////////////////////////
                             TEST SETUP
@@ -462,6 +465,11 @@ contract CreditTest is Test, Deployers {
         // so we don't need real values
         // BalanceDelta delta = BalanceDelta.wrap(0);
         
+        // Expect the LiquidityAdded event with the correct parameters
+        // Format: indexed topic 1, indexed topic 2, indexed topic 3, non-indexed data
+        vm.expectEmit(true, false, false, true);
+        emit LiquidityAdded(sender, uint256(liquidity));
+        
         // Call the hook function directly via exposedCall to avoid HookAddressNotValid errors
         // Note: This bypasses the actual Uniswap pool interactions but tests the hook's internal logic
         lendingContract.testAddLiquidity(sender, poolKey, params, "");
@@ -526,6 +534,10 @@ contract CreditTest is Test, Deployers {
             salt: bytes32(0)
         });
         
+        // Expect the LiquidityRemoved event with the correct parameters
+        vm.expectEmit(true, false, false, true);
+        emit LiquidityRemoved(sender, uint256(liquidityToRemove));
+        
         // Remove liquidity directly via the hook
         lendingContract.testRemoveLiquidity(sender, poolKey, removeParams, "");
         
@@ -544,6 +556,10 @@ contract CreditTest is Test, Deployers {
             liquidityDelta: -int128(liquidity - liquidityToRemove),
             salt: bytes32(0)
         });
+        
+        // Expect the LiquidityRemoved event with the correct parameters
+        vm.expectEmit(true, false, false, true);
+        emit LiquidityRemoved(sender, uint256(liquidity - liquidityToRemove));
         
         // Remove remaining liquidity directly via the hook
         lendingContract.testRemoveLiquidity(sender, poolKey, removeAllParams, "");
@@ -606,6 +622,19 @@ contract CreditTest is Test, Deployers {
         
         // Transfer tokens to the lending contract to make them available for distribution
         loanToken.mint(address(lendingContract), donationAmount);
+        
+        // Calculate expected distribution amounts based on percentages defined in the contract
+        uint256 expectedLpShare = (donationAmount * 70) / 100;
+        uint256 expectedSafetyShare = (donationAmount * 10) / 100;
+        uint256 expectedTreasuryShare = (donationAmount * 20) / 100;
+        
+        // First expect the LoanRepaid event
+        vm.expectEmit(true, true, false, true);
+        emit LoanRepaid(loanId, borrower1, donationAmount, true);
+        
+        // Then expect the RewardDistributed event with the correct parameters
+        vm.expectEmit(false, false, false, true);
+        emit RewardDistributed(expectedLpShare, expectedSafetyShare, expectedTreasuryShare);
         
         // Use borrower1 as the sender for the donation to match the loan's borrower
         // This simulates the borrower making a loan repayment
