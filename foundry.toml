@@ -9,11 +9,50 @@ libs = ["lib"]
 
 solc_version = '0.8.26'
 evm_version = "cancun"
+optimizer = true
 optimizer_runs = 800
-via_ir = false
+via_ir = true  # Enable IR compilation for most tests
 ffi = true
+extra_output = ["devdoc", "userdoc", "metadata", "storageLayout"]
+# Extra settings for stack too deep errors
+optimize_stack_allocation = true
+
 remappings = [
     "@openzeppelin/=lib/openzeppelin-contracts/",
     "@uniswap/v4-core/=lib/v4-core/",
     "v4-periphery/=lib/v4-periphery/",
 ]
+
+# Note: When testing CreditInitializeHook.t.sol, if you get 
+# a "stack too deep" error, temporarily change via_ir to false,
+# run the test, then change it back.
+
+# Specific profile for our hook initialization test
+[profile.hookinit]
+src = "src"
+out = "out"
+libs = ["lib"]
+solc_version = '0.8.26'
+evm_version = "cancun"
+via_ir = false  # Disable IR compilation for hook initialization tests
+optimizer = true
+optimizer_runs = 1000
+optimize_stack_allocation = true
+ffi = true
+extra_output = ["metadata"]
+
+remappings = [
+    "@openzeppelin/=lib/openzeppelin-contracts/",
+    "@uniswap/v4-core/=lib/v4-core/",
+    "v4-periphery/=lib/v4-periphery/",
+]
+
+[profile.test]
+# Overrides for test profile
+# Stack depth issues are more common during testing due to additional instrumentation
+via_ir = true
+optimize_stack_allocation = true
+optimizer = true
+optimizer_runs = 1000
+solc_version = '0.8.26'
+evm_version = "cancun"
