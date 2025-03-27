@@ -3,7 +3,6 @@ pragma solidity ^0.8.26;
 
 import {Script, console} from "forge-std/Script.sol";
 import {UnderCollateralizedLending} from "../src/Credit.sol";
-import {TestnetLending} from "../src/TestnetCredit.sol";
 import {ProjectMockERC20} from "../test/mocks/MockERC20.sol";
 import {MockKintoID} from "../test/mocks/MockKintoID.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
@@ -62,7 +61,7 @@ contract DeployTestnet is Script {
         
         // Deploy TestnetLending contract with hook validation bypassed
         // This avoids the stack depth issues while maintaining the contract interface
-        TestnetLending lendingContract = new TestnetLending(
+        UnderCollateralizedLending lendingContract = new UnderCollateralizedLending(
             IPoolManager(poolManager),
             address(loanToken),
             address(collateralToken),

@@ -3,9 +3,10 @@ src = "src"
 out = "out"
 libs = ["lib"]
 solc = "0.8.26"
+evm_version = "cancun"
 optimizer = true
 optimizer_runs = 1000
-via_ir = true
+via_ir = false # Temporarily disabled to fix stack too deep error
 ffi = true
 extra_output = ["devdoc", "userdoc", "metadata", "storageLayout"]
 # Extra settings for stack too deep errors

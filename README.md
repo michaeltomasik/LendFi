@@ -47,7 +47,6 @@ Our smart contracts include:
 ### Prerequisites
 
 - [Foundry](https://book.getfoundry.sh/getting-started/installation)
-- Node.js & npm
 - Basic knowledge of DeFi and Uniswap
 
 ### Installation
@@ -96,12 +95,37 @@ If you encounter "Stack too deep" errors while testing Uniswap V4 hooks:
 4. Split complex functions into smaller functions to reduce local variable count
 5. Use separate test files for different aspects of hook functionality
 
+### EVM Compatibility Requirements
+
+Uniswap v4 relies on Ethereum's Cancun-specific EVM features, specifically the transient storage opcodes (`tload` and `tstore`). To successfully compile and test this project:
+
+1. Configure the EVM version in your foundry.toml file:
+   ```toml
+   [profile.default]
+   evm_version = "cancun"
+   ```
+
+2. If testing on local node, ensure it supports Cancun features:
+   ```bash
+   # Start Anvil with Cancun features enabled
+   anvil --hardfork cancun
+   ```
+
+3. For deployment, ensure your target network has implemented the Cancun upgrade
+
+If you encounter errors like:
+```
+The "tload" instruction is only available for Cancun-compatible VMs (you are currently compiling for "paris")
+```
+This indicates your EVM version needs to be updated to Cancun.
+
 ## Use Cases
 
-- **Liquidity Providers**: Earn both trading fees and lending interest in a single position
-- **Borrowers**: Access liquidity without navigating multiple protocols
-- **Developers**: Build on top of a unified liquidity and lending framework
-- **Traders**: Benefit from deeper liquidity pools enhanced by lending activity
+- **Liquidity Providers**: Earn both trading fees and lending interest in a single position, maximizing capital efficiency
+- **Borrowers**: Access liquidity without navigating multiple protocols, with competitive rates tied directly to pool dynamics
+- **Developers**: Build on top of a unified liquidity and lending framework, creating innovative applications
+- **Traders**: Benefit from deeper liquidity pools enhanced by lending activity, reducing slippage
+- **DeFi Protocols**: Integrate with LOAN FI's hooks to create novel financial products and services
 
 ## What Makes LOAN FI Unique
 
@@ -111,6 +135,8 @@ LOAN FI revolutionizes DeFi by:
 2. **Reducing Protocol Overhead**: Eliminating the need for multiple protocols and token transfers
 3. **Enhancing Capital Efficiency**: Making each deposited token work harder through dual usage
 4. **Providing True Composability**: Creating a foundation for the next generation of DeFi applications
+5. **Simplifying User Experience**: Removing the complexity of managing separate positions across multiple protocols
+6. **Improving Risk Management**: Enabling real-time responses to market conditions through hook-based triggers
 
 ## Contributing
 
@@ -119,11 +145,3 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Documentation
-
-For more detailed documentation, visit our [docs site](https://docs.example.com/loan-fi).
-
----
-
-Built with [Foundry](https://book.getfoundry.sh/)
