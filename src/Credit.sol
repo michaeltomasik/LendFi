@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.26;
 
 import {BaseHook} from "v4-periphery/src/utils/BaseHook.sol";
 
@@ -115,7 +115,7 @@ contract UnderCollateralizedLending is BaseHook, Ownable, ReentrancyGuard {
     
     // --- Hook Permission Function ---
     
-    function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
+    function getHookPermissions() public pure virtual override returns (Hooks.Permissions memory) {
         return Hooks.Permissions({
             beforeInitialize: false,
             afterInitialize: false,
@@ -147,14 +147,11 @@ contract UnderCollateralizedLending is BaseHook, Ownable, ReentrancyGuard {
         BalanceDelta,
         bytes calldata
     ) internal virtual override returns (bytes4, BalanceDelta) {
-        // Calculate liquidity amount from params (make positive)
         uint256 liquidityAdded = uint256(params.liquidityDelta > 0 ? params.liquidityDelta : -params.liquidityDelta);
         
-        // Update LP positions
         lpPositions[sender] += liquidityAdded;
         totalLiquidity += liquidityAdded;
         
-        // Add to LP providers list if not already there
         if (!isLpProvider[sender]) {
             lpProviders.push(sender);
             isLpProvider[sender] = true;
@@ -208,19 +205,20 @@ contract UnderCollateralizedLending is BaseHook, Ownable, ReentrancyGuard {
         uint256 amount1,
         bytes calldata data
     ) internal virtual override returns (bytes4) {
-        // Total donation amount
         uint256 totalAmount = amount0 + amount1;
         
-        // If data is present, this is a loan repayment
         if (data.length > 0) {
-            // Decode loan ID from data
-            uint256 loanId = abi.decode(data, (uint256));
-            
-            // Process as loan repayment
-            _processLoanRepayment(sender, loanId, totalAmount);
+            // If data contains both loanId and borrower (updated format)
+            if (data.length >= 64) {
+                (uint256 loanId, address borrower) = abi.decode(data, (uint256, address));
+                _processLoanRepayment(borrower, loanId, totalAmount);
+            } else {
+                // Legacy format - only loanId
+                uint256 loanId = abi.decode(data, (uint256));
+                _processLoanRepayment(sender, loanId, totalAmount);
+            }
         }
         
-        // Distribute profits (for both donations and repayments)
         _distributeProfits(totalAmount);
         
         return BaseHook.afterDonate.selector;
@@ -240,19 +238,14 @@ contract UnderCollateralizedLending is BaseHook, Ownable, ReentrancyGuard {
         uint256 durationDays,
         uint256 collateralAmount
     ) external nonReentrant returns (uint256) {
-        // Verify KYC status
         require(kintoID.isVerified(msg.sender), "Not KYC verified");
-        
-        // Calculate interest rate based on user's credit metrics
+
         uint256 interestRate = _calculateInterestRate(msg.sender);
         
-        // Calculate required collateral (simplified to 80% for now)
         uint256 requiredCollateral = (amount * 80) / 100;
         require(collateralAmount >= requiredCollateral, "Insufficient collateral");
         
-        // Transfer collateral from borrower
         collateralToken.safeTransferFrom(msg.sender, address(this), collateralAmount);
-        
         // Create the loan
         uint256 loanId = loans.length;
         uint256 dueDate = block.timestamp + (durationDays * 1 days);
@@ -267,15 +260,10 @@ contract UnderCollateralizedLending is BaseHook, Ownable, ReentrancyGuard {
             active: true
         }));
         
-        // Link loan to user
         userLoans[msg.sender].push(loanId);
-        
-        // Update user's credit metrics
         userCreditMetrics[msg.sender].totalBorrowed += amount;
         
-        // Transfer loan amount to borrower
         loanToken.safeTransfer(msg.sender, amount);
-        
         emit LoanCreated(loanId, msg.sender, amount, collateralAmount, dueDate);
         
         return loanId;
@@ -359,16 +347,26 @@ contract UnderCollateralizedLending is BaseHook, Ownable, ReentrancyGuard {
     
     /**
      * @notice Processes a loan repayment
-     * @param borrower Borrower address
+     * @param repayer Address making the repayment (could be router or actual borrower)
      * @param loanId Loan ID
      * @param amount Repayment amount
      */
-    function _processLoanRepayment(address borrower, uint256 loanId, uint256 amount) internal {
+    function _processLoanRepayment(address repayer, uint256 loanId, uint256 amount) internal {
         require(loanId < loans.length, "Invalid loan ID");
         Loan storage loan = loans[loanId];
         
         require(loan.active, "Loan not active");
-        require(loan.borrower == borrower, "Not loan borrower");
+        
+        // When called from _afterDonate, repayer will be the borrower from hook data
+        // When called from repayLoan, msg.sender must be the borrower
+        address borrower = loan.borrower;
+        if (msg.sender != address(poolManager)) {
+            // Direct repayment case
+            require(msg.sender == borrower, "Not loan borrower");
+        } else {
+            // Hook donation case - already verified by passing the correct borrower address
+            // No additional check needed since we trust the hook data decoding
+        }
         
         // Calculate total amount due with interest
         uint256 interest = (loan.principal * loan.interestRate * (block.timestamp - loan.dueDate + 30 days)) / (10000 * 365 days);

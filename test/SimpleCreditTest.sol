@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.26;
 
 import {Test, Vm} from "forge-std/Test.sol";
-import {MockERC20} from "./mocks/MockERC20.sol";
+import {ProjectMockERC20} from "./mocks/MockERC20.sol";
 import {MockKintoID} from "./mocks/MockKintoID.sol";
 
 // Simplified credit contract for testing that doesn't rely on Uniswap V4 hooks
@@ -11,8 +11,8 @@ contract SimpleCreditContract {
     MockKintoID public kintoID;
     
     // Token contracts
-    MockERC20 public loanToken;
-    MockERC20 public collateralToken;
+    ProjectMockERC20 public loanToken;
+    ProjectMockERC20 public collateralToken;
     
     // Treasury and safety fund addresses
     address public treasuryAddress;
@@ -57,8 +57,8 @@ contract SimpleCreditContract {
         address _safetyFundAddress
     ) {
         kintoID = MockKintoID(_kintoIDAddress);
-        loanToken = MockERC20(_loanTokenAddress);
-        collateralToken = MockERC20(_collateralTokenAddress);
+        loanToken = ProjectMockERC20(_loanTokenAddress);
+        collateralToken = ProjectMockERC20(_collateralTokenAddress);
         treasuryAddress = _treasuryAddress;
         safetyFundAddress = _safetyFundAddress;
         owner = msg.sender;
@@ -288,8 +288,8 @@ contract SimpleCreditTest is Test {
     SimpleCreditContract creditContract;
 
     // Mock tokens
-    MockERC20 loanToken;
-    MockERC20 collateralToken;
+    ProjectMockERC20 loanToken;
+    ProjectMockERC20 collateralToken;
 
     // Mock KYC service
     MockKintoID mockKintoID;
@@ -313,8 +313,8 @@ contract SimpleCreditTest is Test {
         borrower2 = makeAddr("borrower2");
 
         // Deploy mock tokens
-        loanToken = new MockERC20("Loan Token", "LOAN");
-        collateralToken = new MockERC20("Collateral Token", "COLL");
+        loanToken = new ProjectMockERC20("Loan Token", "LOAN");
+        collateralToken = new ProjectMockERC20("Collateral Token", "COLL");
 
         // Deploy mock KintoID
         mockKintoID = new MockKintoID();

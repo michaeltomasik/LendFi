@@ -38,8 +38,8 @@ import Dashboard from './components/Dashboard';
 import cyberpunkTheme from './theme/RainbowKitTheme';
 
 // Constants
-const ALCHEMY_API_KEY = 'demo'; // Use your Alchemy API key here
-const APP_NAME = 'LendFi';
+const ALCHEMY_API_KEY = 'PvRVWSZrTWrYQjPJ9zTs_7oHlcZYbwX8'; // Use your Alchemy API key here
+const APP_NAME = 'LoanFi';
 const WALLETCONNECT_PROJECT_ID = 'c5e4f68a42bee9df48927d0b2668ef5d';
 
 // Configure chains & providers

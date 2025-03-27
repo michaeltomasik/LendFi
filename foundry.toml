@@ -2,20 +2,18 @@
 src = "src"
 out = "out"
 libs = ["lib"]
-
-# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
-
-# foundry.toml
-
-solc_version = '0.8.26'
-evm_version = "cancun"
+solc = "0.8.26"
 optimizer = true
-optimizer_runs = 800
-via_ir = true  # Enable IR compilation for most tests
+optimizer_runs = 1000
+via_ir = true
 ffi = true
 extra_output = ["devdoc", "userdoc", "metadata", "storageLayout"]
 # Extra settings for stack too deep errors
 optimize_stack_allocation = true
+
+# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
+
+# foundry.toml
 
 remappings = [
     "@openzeppelin/=lib/openzeppelin-contracts/",
@@ -50,9 +48,19 @@ remappings = [
 [profile.test]
 # Overrides for test profile
 # Stack depth issues are more common during testing due to additional instrumentation
+src = "test"
 via_ir = true
-optimize_stack_allocation = true
-optimizer = true
-optimizer_runs = 1000
-solc_version = '0.8.26'
-evm_version = "cancun"
+fuzz_runs = 256
+
+[rpc_endpoints]
+sepolia = "${SEPOLIA_RPC_URL}"
+goerli = "${GOERLI_RPC_URL}"
+
+[fmt]
+line_length = 120
+tab_width = 4
+bracket_spacing = false
+
+[profile.ci]
+fuzz_runs = 1000
+via_ir = true

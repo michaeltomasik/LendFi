@@ -13,12 +13,32 @@ import {
   MenuItem,
   Slider,
   InputAdornment,
-  Tooltip
+  Tooltip,
+  IconButton
 } from '@material-ui/core';
 import InfoIcon from '@material-ui/icons/Info';
-import { useAccount, useNetwork } from 'wagmi';
+import { useAccount, useNetwork, useContract, useProvider, useSigner } from 'wagmi';
 import { toast } from 'react-toastify';
 import { SUPPORTED_TOKENS, SUPPORTED_CHAIN_IDS } from '../constants';
+import { ethers, providers } from 'ethers';
+import { parseUnits, formatUnits } from 'ethers/lib/utils';
+import CircularProgress from '@material-ui/core/CircularProgress';
+import RefreshIcon from '@material-ui/icons/Refresh';
+
+// Import Contract ABIs
+import ERC20ABI from '../abis/ERC20.json';
+import LendingContractABI from '../abis/LendingContract.json';
+
+// Contract addresses from deployment
+const CONTRACT_ADDRESSES = {
+  // Default to Sepolia testnet
+  11155111: {
+    lendingContract: '0xa96ac4b14ce7ef71367194169d6b2402abf2ed68',
+    //lendingContract: '0x238cc754BB91265E61045e47F2aAf068F7D56F1d',
+    loanToken: '0x779877A7B0D9E8603169DdbD7836e478b4624789', // LINK
+    collateralToken: '0xaA8E23Fb1079EA71e0a56F48a2aA51851D8433D0' // USDT
+  }
+};
 
 const useStyles = makeStyles((theme) => ({
   root: {
@@ -217,33 +237,95 @@ const useStyles = makeStyles((theme) => ({
       background: `linear-gradient(90deg, ${theme.palette.primary.main}, transparent)`,
     },
   },
+  highlightedText: {
+    color: theme.palette.primary.main,
+  },
 }));
 
 const Borrow = () => {
   const classes = useStyles();
-  const { isConnected } = useAccount();
+  const { isConnected, address } = useAccount();
   const { chain } = useNetwork();
+  const provider = useProvider();
+  const { data: signer } = useSigner();
   
-  const [selectedToken, setSelectedToken] = useState('');
-  const [selectedCollateral, setSelectedCollateral] = useState('');
   const [amount, setAmount] = useState('');
   const [collateralAmount, setCollateralAmount] = useState('');
   const [ltv, setLtv] = useState(50);
   const [healthFactor, setHealthFactor] = useState(2);
-  
-  // Get the list of tokens for the current network
-  const tokens = chain && SUPPORTED_CHAIN_IDS.includes(chain.id) 
-    ? SUPPORTED_TOKENS[chain.id] 
-    : SUPPORTED_TOKENS[1]; // Default to mainnet if not on a supported chain
+  const [loading, setLoading] = useState(false);
+  const [approvalLoading, setApprovalLoading] = useState(false);
+  const [dataLoading, setDataLoading] = useState(false);
+  const [loanDuration, setLoanDuration] = useState(30); // 30 days default
+  const [linkBalance, setLinkBalance] = useState('0');
+  const [balanceLoading, setBalanceLoading] = useState(false);
+  const [providerStatus, setProviderStatus] = useState('connecting');
+  const [tokenAllowance, setTokenAllowance] = useState('0');
 
-  // Handle token selection
-  const handleTokenChange = (event) => {
-    setSelectedToken(event.target.value);
+  // Determine which network we're on
+  const networkId = chain?.id || 11155111; // Default to Sepolia
+  const addresses = CONTRACT_ADDRESSES[networkId] || CONTRACT_ADDRESSES[11155111];
+
+  // Update page title
+  useEffect(() => {
+    document.title = "LINK Under-Collateralized Loans";
+  }, []);
+
+  // Setup provider with fallback
+  const setupProvider = () => {
+    // Try to use the wagmi provider first
+    if (provider) {
+      return provider;
+    }
+    
+    // If we're connected but having CORS issues with the default provider, use a custom one
+    if (isConnected) {
+      try {
+        // Create a custom provider using ethers
+        // Use a public gateway that has proper CORS headers
+        return new providers.JsonRpcProvider('https://rpc.ankr.com/eth_sepolia');
+      } catch (error) {
+        console.error('Error creating custom provider:', error);
+      }
+    }
+    
+    // Fallback to default public provider
+    return ethers.getDefaultProvider('sepolia');
   };
 
-  // Handle collateral token selection
-  const handleCollateralChange = (event) => {
-    setSelectedCollateral(event.target.value);
+  // Use our configured provider
+  const customProvider = setupProvider();
+
+  // Setup contract instances with our custom provider
+  const lendingContract = useContract({
+    address: addresses.lendingContract,
+    abi: LendingContractABI.abi,
+    signerOrProvider: signer || customProvider,
+  });
+
+  const linkTokenContract = useContract({
+    address: addresses.loanToken,
+    abi: ERC20ABI,
+    signerOrProvider: signer || customProvider,
+  });
+
+  const collateralTokenContract = useContract({
+    address: addresses.collateralToken,
+    abi: ERC20ABI,
+    signerOrProvider: signer || customProvider,
+  });
+
+  // Add a function to check if the provider is working
+  const checkProvider = async () => {
+    try {
+      // Try to get the latest block number as a simple check
+      const blockNumber = await customProvider.getBlockNumber();
+      console.log("Connected to network, latest block:", blockNumber);
+      return true;
+    } catch (error) {
+      console.error("Provider connection error:", error);
+      return false;
+    }
   };
 
   // Handle borrow amount input
@@ -256,30 +338,345 @@ const Borrow = () => {
     setCollateralAmount(event.target.value);
   };
 
+  // Handle duration change
+  const handleDurationChange = (event) => {
+    setLoanDuration(parseInt(event.target.value));
+  };
+
   // Handle LTV slider change
   const handleLtvChange = (event, newValue) => {
     setLtv(newValue);
-    // Calculate health factor based on LTV (mock calculation for now)
+    // Calculate health factor based on LTV
     setHealthFactor((100 / newValue) * 1.1);
   };
 
-  // Handle borrow submission
-  const handleBorrow = () => {
-    if (!isConnected) {
+  // Function to refresh balances manually
+  const refreshBalances = async () => {
+    if (!isConnected || !address) return;
+    
+    setBalanceLoading(true);
+    try {
+      // Get LINK balance
+      if (linkTokenContract) {
+        try {
+          // Avoid caching by using a static call with the latest block
+          const linkBalance = await linkTokenContract.callStatic.balanceOf(address, { blockTag: 'latest' });
+          setLinkBalance(formatUnits(linkBalance, 18));
+          
+          // Also check allowance
+          const allowance = await linkTokenContract.allowance(address, addresses.lendingContract);
+          setTokenAllowance(formatUnits(allowance, 18));
+          console.log('Current LINK allowance:', formatUnits(allowance, 18));
+        } catch (linkError) {
+          console.error('Error fetching LINK balance:', linkError);
+        }
+      }
+    } catch (error) {
+      console.error('Error refreshing balances:', error);
+    } finally {
+      setBalanceLoading(false);
+    }
+  };
+
+  // Fetch balances when account or network changes
+  useEffect(() => {
+    if (isConnected && address) {
+      console.log("isConnected useEffect", isConnected, address);
+      
+      // Check provider status first
+      checkProvider().then(isWorking => {
+        if (isWorking) {
+          setProviderStatus('connected');
+          refreshBalances();
+        } else {
+          setProviderStatus('error');
+          // Try to switch to alternative provider
+          toast.info('Attempting to connect with alternative RPC endpoint...', {
+            className: 'cyber-toast',
+          });
+          
+          // Short delay then retry
+          setTimeout(() => {
+            refreshBalances();
+          }, 1500);
+        }
+      });
+    }
+  }, [address, isConnected, chain, provider]);
+
+  // Format currency with commas
+  const formatCurrency = (value) => {
+    return parseFloat(value).toLocaleString('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 6
+    });
+  };
+
+  // Handle approving LINK tokens
+  const handleApproveLink = async () => {
+    if (!isConnected || !linkTokenContract) {
       toast.error('Please connect your wallet first', {
         className: 'cyber-toast error-toast',
-        bodyClassName: 'cyber-toast-body',
-        progressClassName: 'cyber-toast-progress',
       });
       return;
     }
 
-    // Perform borrowing logic here
-    toast.info(`Borrowing ${amount} ${selectedToken}...`, {
-      className: 'cyber-toast',
-      bodyClassName: 'cyber-toast-body',
-      progressClassName: 'cyber-toast-progress',
-    });
+    if (!collateralAmount) {
+      toast.error('Please enter a collateral amount', {
+        className: 'cyber-toast error-toast',
+      });
+      return;
+    }
+
+    setApprovalLoading(true);
+    
+    try {
+      console.log("=== Approving LINK Tokens ===");
+      
+      // Parse the amount to wei
+      const collateralAmountWei = parseUnits(collateralAmount, 18);
+      
+      // Approve the tokens
+      const tx = await linkTokenContract.approve(addresses.lendingContract, collateralAmountWei);
+      
+      toast.info(`Approving LINK tokens... Please wait for confirmation.`, {
+        className: 'cyber-toast',
+      });
+      
+      console.log("Approval transaction sent:", tx.hash);
+      const receipt = await tx.wait();
+      console.log("Approval confirmed:", receipt);
+      
+      toast.success(`Successfully approved LINK tokens!`, {
+        className: 'cyber-toast success-toast',
+      });
+      
+      // Refresh allowance
+      refreshBalances();
+      
+    } catch (error) {
+      console.error('Approval error:', error);
+      
+      // More detailed error handling
+      let errorMessage = error.message;
+      
+      if (error.code === 'ACTION_REJECTED') {
+        errorMessage = 'Transaction was rejected by the wallet';
+      }
+      
+      toast.error(`Failed to approve tokens: ${errorMessage}`, {
+        className: 'cyber-toast error-toast',
+      });
+    } finally {
+      setApprovalLoading(false);
+    }
+  };
+
+  // Handle loan creation
+  const handleCreateLoan = async () => {
+    if (!isConnected) {
+      toast.error('Please connect your wallet first', {
+        className: 'cyber-toast error-toast',
+      });
+      return;
+    }
+
+    if (!amount || !collateralAmount || !loanDuration) {
+      toast.error('Please fill in all required fields', {
+        className: 'cyber-toast error-toast',
+      });
+      return;
+    }
+
+    const collateralAmountNum = parseFloat(collateralAmount);
+    const tokenAllowanceNum = parseFloat(tokenAllowance);
+    
+    // Check if approval is needed
+    if (collateralAmountNum > tokenAllowanceNum) {
+      toast.error('Please approve LINK tokens first', {
+        className: 'cyber-toast error-toast',
+      });
+      return;
+    }
+
+    setLoading(true);
+    
+    try {
+      console.log("=== Creating Under-Collateralized LINK Loan ===");
+      console.log("Loan Amount:", amount, "LINK");
+      console.log("Collateral Amount:", collateralAmount, "LINK");
+      console.log("Duration (days):", loanDuration);
+      
+      // Check if lendingContract exists
+      if (!lendingContract) {
+        throw new Error("Lending contract is not initialized. Please check your connection.");
+      }
+      
+      // Check if the contract has the createLoan function
+      if (!lendingContract.createLoan) {
+        console.error("Contract ABI:", JSON.stringify(lendingContract.interface.fragments, null, 2));
+        throw new Error("The 'createLoan' function does not exist on the contract.");
+      }
+      
+      // Log contract address
+      console.log("Lending Contract Address:", lendingContract.address);
+      console.log("Connected wallet address:", address);
+      
+      // Parse the amounts to wei
+      const loanAmountWei = parseUnits(amount, 18);
+      const collateralAmountWei = parseUnits(collateralAmount, 18);
+      
+      console.log("Loan Amount Wei:", loanAmountWei.toString());
+      console.log("Collateral Amount Wei:", collateralAmountWei.toString());
+      console.log("Duration (days):", loanDuration);
+      
+      try {
+        // First try to estimate gas for the transaction to catch any likely errors
+        const estimatedGas = await lendingContract.estimateGas.createLoan(
+          loanAmountWei,
+          loanDuration,
+          collateralAmountWei
+        );
+        
+        console.log("Estimated gas for createLoan:", estimatedGas.toString());
+        
+        // Add 20% buffer to estimated gas
+        const gasLimit = estimatedGas.mul(120).div(100);
+        console.log("Using gas limit of:", gasLimit.toString());
+        console.log('lendingContract', lendingContract);
+        // Call the createLoan function on the contract
+        // For LINK collateral, we need to first approve the tokens
+        const tx = await lendingContract.createLoan(
+          loanAmountWei,
+          loanDuration,
+          collateralAmountWei,
+          { gasLimit }
+        );
+        
+        toast.info(`Creating loan... Please wait for confirmation. Transaction hash: ${tx.hash.slice(0, 10)}...`, {
+          className: 'cyber-toast',
+        });
+        
+        console.log("Transaction sent:", tx.hash);
+        const receipt = await tx.wait();
+        console.log("Transaction confirmed:", receipt);
+        
+        // Find the LoanTaken event in the receipt to get the loan ID
+        const loanTakenEvent = receipt.events?.find(e => e.event === 'LoanTaken');
+        const loanId = loanTakenEvent?.args?.borrower ? 'Success' : 'Unknown';
+        
+        toast.success(`Successfully created loan! Status: ${loanId}`, {
+          className: 'cyber-toast success-toast',
+        });
+        
+        // Reset the form
+        setAmount('');
+        setCollateralAmount('');
+        
+        // Refresh balances
+        refreshBalances();
+      } catch (gasEstimationError) {
+        console.error("Gas estimation failed:", gasEstimationError);
+        
+        // If gas estimation fails, try with a fixed gas limit as fallback
+        try {
+          console.log("Attempting transaction with fixed gas limit of 500,000");
+          
+          const tx = await lendingContract.createLoan(
+            loanAmountWei,
+            loanDuration,
+            collateralAmountWei,
+            { gasLimit: 500000 }
+          );
+          
+          toast.info(`Creating loan... Please wait for confirmation. Transaction hash: ${tx.hash.slice(0, 10)}...`, {
+            className: 'cyber-toast',
+          });
+          
+          console.log("Transaction sent with fixed gas limit:", tx.hash);
+          const receipt = await tx.wait();
+          console.log("Transaction confirmed:", receipt);
+          
+          // Find the LoanTaken event in the receipt to get the loan ID
+          const loanTakenEvent = receipt.events?.find(e => e.event === 'LoanTaken');
+          const loanId = loanTakenEvent?.args?.borrower ? 'Success' : 'Unknown';
+          
+          toast.success(`Successfully created loan! Status: ${loanId}`, {
+            className: 'cyber-toast success-toast',
+          });
+          
+          // Reset the form
+          setAmount('');
+          setCollateralAmount('');
+          
+          // Refresh balances
+          refreshBalances();
+        } catch (fixedGasError) {
+          console.error("Transaction failed with fixed gas limit:", fixedGasError);
+          throw fixedGasError; // Re-throw to be caught by the outer catch block
+        }
+      }
+    } catch (error) {
+      console.error('Loan creation error:', error);
+      
+      // More detailed error handling
+      let errorMessage = error.message;
+      
+      if (error.code === 'ACTION_REJECTED') {
+        errorMessage = 'Transaction was rejected by the wallet';
+      } else if (error.code === 'INSUFFICIENT_FUNDS') {
+        errorMessage = 'Insufficient funds for gas';
+      } else if (error.code === 'CALL_EXCEPTION') {
+        errorMessage = 'Contract call failed. The function might not exist or the parameters are incorrect.';
+        
+        // Try to get more details from the error
+        if (error.error && error.error.message) {
+          errorMessage += ` Details: ${error.error.message}`;
+        }
+      } else if (error.message && error.message.includes('execution reverted')) {
+        // Try to extract revert reason if available
+        const revertReason = error.data?.message || error.message;
+        errorMessage = `Transaction reverted: ${revertReason}`;
+      }
+      
+      toast.error(`Failed to create loan: ${errorMessage}`, {
+        className: 'cyber-toast error-toast',
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Add function to manually switch provider
+  const switchProvider = async () => {
+    setProviderStatus('switching');
+    
+    // Try to connect to a different RPC endpoint
+    try {
+      // We'll use a different public RPC endpoint
+      const newProvider = new providers.JsonRpcProvider('https://sepolia.infura.io/v3/9aa3d95b3bc440fa88ea12eaa4456161');
+      
+      // Test the new provider
+      await newProvider.getBlockNumber();
+      
+      // Override our provider
+      Object.assign(customProvider, newProvider);
+      
+      toast.success('Successfully switched to alternative RPC provider', {
+        className: 'cyber-toast success-toast',
+      });
+      
+      setProviderStatus('connected');
+      
+      // Refresh data with new provider
+      refreshBalances();
+    } catch (error) {
+      console.error('Failed to switch provider:', error);
+      setProviderStatus('error');
+      toast.error('Failed to switch provider. Please try again later.', {
+        className: 'cyber-toast error-toast',
+      });
+    }
   };
 
   // Get health factor color based on value
@@ -294,33 +691,79 @@ const Borrow = () => {
     <div className={classes.root}>
       <Container className={classes.container} maxWidth="lg">
         <Typography variant="h4" component="h1" className={classes.header}>
-          Borrow Assets
+          LINK Under-Collateralized Loans
         </Typography>
+
+        {/* Provider status indicator */}
+        <Box display="flex" alignItems="center" justifyContent="flex-end" mb={2}>
+          <Typography variant="body2" style={{ marginRight: '10px' }}>
+            RPC Status:
+          </Typography>
+          <Box 
+            component="span" 
+            style={{ 
+              width: 10, 
+              height: 10, 
+              borderRadius: '50%', 
+              backgroundColor: 
+                providerStatus === 'connected' ? '#4caf50' : 
+                providerStatus === 'connecting' ? '#ff9800' : '#f44336',
+              display: 'inline-block',
+              marginRight: 8
+            }}
+          />
+          <Typography variant="body2" style={{ marginRight: '10px' }}>
+            {providerStatus === 'connected' ? 'Connected' : 
+             providerStatus === 'connecting' ? 'Connecting...' : 'Connection Error'}
+          </Typography>
+          {providerStatus !== 'connected' && (
+            <Button 
+              variant="outlined" 
+              size="small" 
+              onClick={switchProvider}
+              disabled={providerStatus === 'switching'}
+            >
+              {providerStatus === 'switching' ? (
+                <CircularProgress size={16} />
+              ) : (
+                'Switch Provider'
+              )}
+            </Button>
+          )}
+        </Box>
 
         <Grid container spacing={4}>
           <Grid item xs={12} md={6}>
             <Paper className={classes.paper}>
               <Typography variant="h6" className={classes.sectionTitle}>
-                Collateral
+                LINK Collateral
               </Typography>
               
-              <FormControl variant="outlined" className={classes.formControl}>
-                <Select
-                  value={selectedCollateral}
-                  onChange={handleCollateralChange}
-                  className={classes.tokenSelect}
-                  disabled={!isConnected}
-                >
-                  <MenuItem value="" disabled>
-                    Select Collateral
-                  </MenuItem>
-                  {tokens.map((token) => (
-                    <MenuItem key={token.symbol} value={token.symbol} className={classes.tokenMenuItem}>
-                      {token.symbol} - {token.name}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
+              {isConnected && (
+                <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+                  <Typography variant="body2">
+                    Your LINK Balance:
+                    <IconButton 
+                      size="small" 
+                      onClick={refreshBalances} 
+                      disabled={balanceLoading}
+                      style={{ padding: 2, marginLeft: 4 }}
+                    >
+                      <RefreshIcon fontSize="small" />
+                    </IconButton>
+                  </Typography>
+                  {balanceLoading ? (
+                    <Box display="flex" alignItems="center">
+                      <CircularProgress size={14} style={{ marginRight: 8 }} />
+                      <Typography variant="body2">Loading...</Typography>
+                    </Box>
+                  ) : (
+                    <Typography variant="body2" className={classes.highlightedText}>
+                      {formatCurrency(linkBalance)} LINK
+                    </Typography>
+                  )}
+                </Box>
+              )}
 
               <TextField
                 label="Collateral Amount"
@@ -329,15 +772,61 @@ const Borrow = () => {
                 value={collateralAmount}
                 onChange={handleCollateralAmountChange}
                 className={classes.formControl}
-                disabled={!selectedCollateral || !isConnected}
+                disabled={!isConnected || loading || approvalLoading}
                 InputProps={{
-                  endAdornment: selectedCollateral ? (
-                    <InputAdornment position="end">{selectedCollateral}</InputAdornment>
-                  ) : null,
+                  endAdornment: <InputAdornment position="end">LINK</InputAdornment>,
                 }}
               />
 
-              <Typography variant="h6" className={classes.sectionTitle}>
+              <Box display="flex" justifyContent="space-between" mb={2}>
+                <Button 
+                  size="small" 
+                  onClick={() => setCollateralAmount((parseFloat(linkBalance) * 0.25).toString())}
+                  disabled={!isConnected || loading || approvalLoading}
+                >
+                  25%
+                </Button>
+                <Button 
+                  size="small" 
+                  onClick={() => setCollateralAmount((parseFloat(linkBalance) * 0.5).toString())}
+                  disabled={!isConnected || loading || approvalLoading}
+                >
+                  50%
+                </Button>
+                <Button 
+                  size="small" 
+                  onClick={() => setCollateralAmount((parseFloat(linkBalance) * 0.75).toString())}
+                  disabled={!isConnected || loading || approvalLoading}
+                >
+                  75%
+                </Button>
+                <Button 
+                  size="small" 
+                  onClick={() => setCollateralAmount(linkBalance)}
+                  disabled={!isConnected || loading || approvalLoading}
+                >
+                  Max
+                </Button>
+              </Box>
+
+              {isConnected && collateralAmount && parseFloat(collateralAmount) > parseFloat(tokenAllowance) && (
+                <Button
+                  variant="outlined"
+                  color="primary"
+                  fullWidth
+                  className={classes.actionButton}
+                  onClick={handleApproveLink}
+                  disabled={loading || approvalLoading}
+                >
+                  {approvalLoading ? (
+                    <CircularProgress size={24} color="inherit" />
+                  ) : (
+                    "Approve LINK Tokens"
+                  )}
+                </Button>
+              )}
+
+              <Typography variant="h6" className={classes.sectionTitle} style={{ marginTop: '20px' }}>
                 Loan to Value (LTV) Ratio
               </Typography>
               
@@ -346,7 +835,7 @@ const Borrow = () => {
                 onChange={handleLtvChange}
                 aria-labelledby="ltv-slider"
                 className={classes.slider}
-                disabled={!isConnected || !selectedCollateral || !collateralAmount}
+                disabled={!isConnected || !collateralAmount || loading || approvalLoading}
                 min={10}
                 max={80}
                 step={1}
@@ -384,26 +873,15 @@ const Borrow = () => {
           <Grid item xs={12} md={6}>
             <Paper className={classes.paper}>
               <Typography variant="h6" className={classes.sectionTitle}>
-                Borrow Asset
+                Borrow LINK
               </Typography>
               
-              <FormControl variant="outlined" className={classes.formControl}>
-                <Select
-                  value={selectedToken}
-                  onChange={handleTokenChange}
-                  className={classes.tokenSelect}
-                  disabled={!isConnected || !selectedCollateral || !collateralAmount}
-                >
-                  <MenuItem value="" disabled>
-                    Select Asset
-                  </MenuItem>
-                  {tokens.map((token) => (
-                    <MenuItem key={token.symbol} value={token.symbol} className={classes.tokenMenuItem}>
-                      {token.symbol} - {token.name}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
+              <Box mt={2} mb={3}>
+                <Typography variant="body2">
+                  Under-Collateralized loans let you borrow LINK against your LINK holdings. 
+                  This is useful for accessing liquidity without selling your tokens.
+                </Typography>
+              </Box>
 
               <TextField
                 label="Borrow Amount"
@@ -412,41 +890,33 @@ const Borrow = () => {
                 value={amount}
                 onChange={handleAmountChange}
                 className={classes.formControl}
-                disabled={!selectedToken || !isConnected || !selectedCollateral || !collateralAmount}
+                disabled={!isConnected || !collateralAmount || loading || approvalLoading}
                 InputProps={{
-                  endAdornment: selectedToken ? (
-                    <InputAdornment position="end">{selectedToken}</InputAdornment>
-                  ) : null,
+                  endAdornment: <InputAdornment position="end">LINK</InputAdornment>,
+                }}
+              />
+
+              <TextField
+                label="Loan Duration (days)"
+                variant="outlined"
+                fullWidth
+                type="number"
+                value={loanDuration}
+                onChange={handleDurationChange}
+                className={classes.formControl}
+                disabled={!isConnected || loading || approvalLoading}
+                InputProps={{
+                  endAdornment: (
+                    <InputAdornment position="end">days</InputAdornment>
+                  ),
                 }}
               />
 
               <Typography variant="body2" gutterBottom>
-                Interest Rate: <span style={{ color: '#00f5ff' }}>3.5% APR</span>
-                <Tooltip
-                  title="Annual percentage rate - the cost of borrowing expressed as a yearly percentage"
-                  classes={{ tooltip: classes.infoTooltip }}
-                  arrow
-                >
-                  <InfoIcon className={classes.infoIcon} fontSize="small" />
-                </Tooltip>
-              </Typography>
-
-              <Typography variant="body2" gutterBottom>
-                Origination Fee: <span style={{ color: '#00f5ff' }}>0.1%</span>
-                <Tooltip
-                  title="One-time fee charged when you take out a loan"
-                  classes={{ tooltip: classes.infoTooltip }}
-                  arrow
-                >
-                  <InfoIcon className={classes.infoIcon} fontSize="small" />
-                </Tooltip>
-              </Typography>
-
-              <Typography variant="body2" gutterBottom>
                 Max Borrow: <span style={{ color: '#00f5ff' }}>
-                  {collateralAmount && selectedCollateral 
-                    ? `${(parseFloat(collateralAmount) * ltv / 100).toFixed(2)} worth of ${selectedToken || 'assets'}`
-                    : '0.00'
+                  {collateralAmount
+                    ? `${(parseFloat(collateralAmount) * ltv / 100).toFixed(2)} LINK`
+                    : '0.00 LINK'
                   }
                 </span>
               </Typography>
@@ -456,10 +926,22 @@ const Borrow = () => {
                 color="primary"
                 fullWidth
                 className={classes.actionButton}
-                onClick={handleBorrow}
-                disabled={!isConnected || !selectedToken || !amount || !selectedCollateral || !collateralAmount}
+                onClick={handleCreateLoan}
+                disabled={
+                  !isConnected || 
+                  !amount || 
+                  !collateralAmount || 
+                  !loanDuration || 
+                  loading || 
+                  approvalLoading ||
+                  (parseFloat(collateralAmount) > parseFloat(tokenAllowance))
+                }
               >
-                Borrow {selectedToken}
+                {loading ? (
+                  <CircularProgress size={24} color="inherit" />
+                ) : (
+                  "Create LINK Loan"
+                )}
               </Button>
             </Paper>
           </Grid>

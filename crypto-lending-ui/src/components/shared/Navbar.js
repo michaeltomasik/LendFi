@@ -204,7 +204,7 @@ const Navbar = () => {
         <Toolbar className={classes.toolbar}>
           <Box className={classes.brand}>
             <Typography variant="h6" className={classes.title}>
-              LendFi
+             LoanFi
             </Typography>
             <Typography variant="subtitle2" className={classes.brandSub}>
               Crypto Lending

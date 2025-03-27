@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.26;
 
 import {Test, Vm} from "forge-std/Test.sol";
 import {Deployers} from "@uniswap/v4-core/test/utils/Deployers.sol";
-import {MockERC20} from "./mocks/MockERC20.sol";
+import {ProjectMockERC20} from "./mocks/MockERC20.sol";
 import {PoolManager} from "v4-core/PoolManager.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol";
@@ -32,8 +32,8 @@ contract CreditTest is Test, Deployers {
     MockUnderCollateralizedLending lendingContract;
 
     // Mock tokens
-    MockERC20 loanToken;
-    MockERC20 collateralToken;
+    ProjectMockERC20 loanToken;
+    ProjectMockERC20 collateralToken;
 
     // Mock KYC service
     MockKintoID mockKintoID;
@@ -75,8 +75,8 @@ contract CreditTest is Test, Deployers {
         borrower2 = makeAddr("borrower2");
 
         // Deploy mock tokens
-        loanToken = new MockERC20("Loan Token", "LOAN");
-        collateralToken = new MockERC20("Collateral Token", "COLL");
+        loanToken = new ProjectMockERC20("Loan Token", "LOAN");
+        collateralToken = new ProjectMockERC20("Collateral Token", "COLL");
 
         // Deploy mock KintoID
         mockKintoID = new MockKintoID();
@@ -149,7 +149,7 @@ contract CreditTest is Test, Deployers {
         
         // Expect the LoanCreated event
         uint256 loanAmount = 1 ether;
-        uint256 collateralAmount = 1 ether;
+        uint256 collateralAmount = 0.8 ether;
         uint256 durationDays = 30;
         
         vm.expectEmit(true, true, true, true);

@@ -28,11 +28,6 @@ contract MockUnderCollateralizedLending is UnderCollateralizedLending {
         _safetyFundAddress
     ) {}
     
-    // Override this function to skip validation for testing
-    function validateHookAddress(BaseHook _this) internal pure override {}
-    
-    // Test wrapper functions to directly call hook callbacks for testing
-    
     /**
      * @notice Test function to simulate afterAddLiquidity hook callback
      */

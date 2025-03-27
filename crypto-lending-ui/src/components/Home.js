@@ -238,7 +238,7 @@ const Home = () => {
         <div className={classes.hero}>
           <div className={classes.heroContent}>
             <Typography variant="h1" className={classes.title}>
-              LendFi
+              LoanFi
             </Typography>
             <Typography variant="h5" className={classes.subtitle}>
               Next-generation crypto lending platform providing liquidity for pairs of assets with under-collateralized loans
@@ -345,7 +345,7 @@ const Home = () => {
             initialize_lendfi_protocol --network ethereum --version 0.1.0_alpha
           </Typography>
           <Typography variant="body1" className={`${classes.terminalLine} response success`}>
-            LendFi protocol initialized successfully. Ready for transactions.
+             LoanFi protocol initialized successfully. Ready for transactions.
           </Typography>
           <Typography variant="body1" className={classes.terminalLine}>
             deploy_dual_asset_pools --base-assets ETH,WBTC --quote-assets DAI,USDC
